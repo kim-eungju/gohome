@@ -120,7 +120,7 @@ class SubwayPanel(QFrame):
         self.rows.addStretch(1)
 
     def show_placeholder(self) -> None:
-        ph = _label("조회 버튼을 눌러 도착정보를 확인하세요.", "placeholder")
+        ph = _label("도착정보를 불러오는 중입니다…", "placeholder")
         ph.setAlignment(Qt.AlignCenter)
         self._set_body_message(ph)
         self.footer.setText("")

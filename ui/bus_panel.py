@@ -65,7 +65,7 @@ class BusPanel(QFrame):
     # ------------------------------------------------------------------
     def show_placeholder(self) -> None:
         clear_layout(self.body)
-        ph = _label("조회 버튼을 눌러 도착정보를 확인하세요.", "placeholder")
+        ph = _label("도착정보를 불러오는 중입니다…", "placeholder")
         ph.setAlignment(Qt.AlignCenter)
         self.body.addStretch(1)
         self.body.addWidget(ph)
