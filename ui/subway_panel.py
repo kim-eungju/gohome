@@ -134,6 +134,8 @@ class SubwayPanel(QFrame):
             if info.arrivals:
                 notes.append("예상 도착은 API 값이 아니라 역별 평소 소요시간(12역 이내)으로 계산한 추정치입니다. "
                              "'정보 시각'은 열차 위치가 확인된 시점입니다.")
+            if any(a.from_arrival_api for a in info.arrivals):
+                notes.append("'도착정보 보충' 열차는 위치 API 에 빠져 있어 역 도착정보 API 로 채운 열차입니다 (급행 여부 부정확).")
             if any(a.stale for a in info.arrivals):
                 notes.append("⚠ '정보 지연' 열차는 위치 정보가 5분 이상 갱신되지 않아 참고용입니다.")
         if info.arrivals and bus is not None:
@@ -165,6 +167,8 @@ class SubwayPanel(QFrame):
             tags.addWidget(_tag("막차"))
         if a.stale:
             tags.addWidget(_tag("정보 지연"))
+        if a.from_arrival_api:
+            tags.addWidget(_tag("도착정보 보충", "info"))
         tags.addStretch(1)
         if tags.count() > 1:
             dest_box.addLayout(tags)

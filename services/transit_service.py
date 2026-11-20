@@ -83,7 +83,7 @@ def filter_and_sort_subway(trains: list[TrainPosition], now: datetime) -> tuple[
     for t in trains:
         if t.subway_id != cfg.SUBWAY_LINE_ID or t.updn_line != cfg.SUBWAY_SOUTHBOUND_UPDN:
             continue
-        away = stations_until_gasan(t.station_id)
+        away = t.stations_away if t.from_arrival_api else stations_until_gasan(t.station_id)
         if away is None:
             continue
         dest = normalize_station_name(t.destination)
@@ -138,10 +138,33 @@ class TransitService:
         return bus_api.parse_bus_response(data, now_kst())
 
     def query_subway(self) -> SubwayInfo:
-        data = subway_api.fetch_subway_raw(self.settings.subway_api_key)
-        trains = subway_api.parse_subway_response(data)
+        with ThreadPoolExecutor(max_workers=1, thread_name_prefix="api-arrival") as ex:
+            fa = ex.submit(self._query_arrival_trains)
+            data = subway_api.fetch_subway_raw(self.settings.subway_api_key)
+            trains = subway_api.parse_subway_response(data)
+            trains = merge_missing_trains(trains, fa.result())
         selected, warnings = filter_and_sort_subway(trains, now_kst())
         return SubwayInfo(cfg.SUBWAY_STATION_NAME, cfg.SUBWAY_DIRECTION_LABEL, selected, warnings=warnings)
+
+    def _query_arrival_trains(self) -> list[TrainPosition]:
+        """보조 조회. 실패해도 위치 API 결과만으로 화면을 그린다."""
+        try:
+            return subway_api.parse_arrival_response(subway_api.fetch_arrival_raw(self.settings.subway_api_key))
+        except ApiError as e:
+            log.warning("subway-arrival: %s (%s)", e.message, e.kind.value)
+        except Exception:
+            log.exception("subway-arrival: unexpected error")
+        return []
+
+
+def merge_missing_trains(positions: list[TrainPosition], arrivals: list[TrainPosition]) -> list[TrainPosition]:
+    """위치 API 에 없는 열차(열차번호 기준)만 도착정보 API 에서 가져와 덧붙인다."""
+    known = {t.train_no for t in positions if t.train_no}
+    extra = [t for t in arrivals if t.train_no and t.train_no not in known]
+    if extra:
+        log.info("subway: %d train(s) missing from position API, filled from arrival API: %s",
+                 len(extra), ", ".join(f"{t.train_no}({t.destination})" for t in extra))
+    return positions + extra
 
 
 def _safe(fn: Callable[[], T], label: str) -> tuple[T | None, str | None]:

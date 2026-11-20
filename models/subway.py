@@ -17,6 +17,7 @@ class TrainPosition:
     is_express: bool          # directAt == "1"
     is_last: bool             # lstcarAt == "1"
     generated_at: datetime | None  # recptnDt (위치 데이터 생성 시각)
+    from_arrival_api: bool = False  # 위치 API 에 없어 역 도착정보 API 로 보충한 열차
     # --- 서비스 계층에서 채움 ---
     stations_away: int | None = None     # 가산디지털단지까지 남은 역 수
     age_sec: int | None = None           # 조회 시점 기준 데이터 경과 시간

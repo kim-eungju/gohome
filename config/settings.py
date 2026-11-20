@@ -41,6 +41,10 @@ BUS_NEXT_STOP_NAME = "에이스하이엔드타워2차"
 # ---------------------------------------------------------------------------
 SUBWAY_API_URL = "http://swopenAPI.seoul.go.kr/api/subway/{key}/json/realtimePosition/0/{end}/{line}"
 SUBWAY_QUERY_LINE = "1호선"
+# 보조: 역 도착정보 (realtimeStationArrival). 위치 API 가 일부 열차를 빠뜨리는 경우가 있어
+# (2026-11-20 실측: 구로 도착 중인 0645 신창행이 위치 API 에 없음) 빠진 열차만 여기서 채운다.
+SUBWAY_ARRIVAL_URL = "http://swopenAPI.seoul.go.kr/api/subway/{key}/json/realtimeStationArrival/0/30/{station}"
+SUBWAY_ARRIVAL_STATION = "가산디지털단지"
 SUBWAY_QUERY_END = 300
 SUBWAY_LINE_ID = "1001"                 # 1호선
 SUBWAY_STATION_ID = "1001080142"        # 가산디지털단지 (1호선)

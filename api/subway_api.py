@@ -17,6 +17,7 @@ realtimeStationArrival(역 도착정보) 대신 이 API 를 쓰는 이유 (2026-
 from __future__ import annotations
 
 import logging
+import re
 from datetime import datetime
 from typing import Any
 from urllib.parse import quote
@@ -117,3 +118,59 @@ def _parse_time(value: str) -> datetime | None:
         return datetime.strptime(value.split(".")[0], "%Y-%m-%d %H:%M:%S").replace(tzinfo=cfg.KST)
     except ValueError:
         return None
+
+
+# ---------------------------------------------------------------------------
+# 보조: 역 도착정보 (realtimeStationArrival)
+#   위치 API 에 빠진 열차를 채우는 용도로만 쓴다. 1호선은 barvlDt 가 항상 0 이라 위치(몇 역 전)만 쓴다.
+#   ordkey 예: "12001신창0" → 상하행(1) + 순번(2) + 남은 역 수(001) + 행선지 + ...
+# ---------------------------------------------------------------------------
+_ORDKEY_AWAY = re.compile(r"^\d{2}(\d{3})")
+_MSG_AWAY = re.compile(r"\[(\d+)\]번째 전역")
+# arvlCd → (현재 역 기준 trainSttus, 가산까지 남은 역 수 보정이 필요한지) : 0 진입 1 도착 2 출발 3 전역출발 4 전역진입 5 전역도착 99 운행중
+_ARVL_TO_STATUS = {"0": "0", "1": "1", "2": "2", "3": "2", "4": "0", "5": "1", "99": ""}
+
+
+def fetch_arrival_raw(api_key: str) -> dict[str, Any]:
+    url = cfg.SUBWAY_ARRIVAL_URL.format(key=quote(api_key, safe=""),
+                                        station=quote(cfg.SUBWAY_ARRIVAL_STATION, safe=""))
+    resp = http_client.get(url, label=LABEL + "-arrival")
+    return http_client.parse_json(resp, label=LABEL + "-arrival")
+
+
+def parse_arrival_response(data: Any) -> list[TrainPosition]:
+    """가산역 도착정보 중 1호선 하행 열차를 TrainPosition 으로 변환 (stations_away 를 미리 채움).
+
+    오류 응답이나 해석할 수 없는 행은 조용히 건너뛴다 (보조 정보이므로 화면을 실패시키지 않는다).
+    """
+    if not isinstance(data, dict):
+        return []
+    rows = data.get("realtimeArrivalList")
+    if not isinstance(rows, list):
+        return []
+    out: list[TrainPosition] = []
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        def s(key: str) -> str:
+            v = row.get(key)
+            return "" if v is None else str(v).strip()
+        if s("subwayId") != cfg.SUBWAY_LINE_ID or s("updnLine") != "하행":
+            continue
+        m = _ORDKEY_AWAY.match(s("ordkey")) or _MSG_AWAY.search(s("arvlMsg2"))
+        if m:
+            away = int(m.group(1))
+        elif s("arvlCd") in ("0", "1", "2"):
+            away = 0
+        elif s("arvlCd") in ("3", "4", "5"):
+            away = 1
+        else:
+            continue
+        out.append(TrainPosition(
+            train_no=s("btrainNo"), subway_id=cfg.SUBWAY_LINE_ID, updn_line=cfg.SUBWAY_SOUTHBOUND_UPDN,
+            station_id="", station_name=s("arvlMsg3"), destination=s("bstatnNm"),
+            status_code=_ARVL_TO_STATUS.get(s("arvlCd"), ""), is_express=s("btrainSttus") == "급행",
+            is_last=s("lstcarAt") == "1", generated_at=_parse_time(s("recptnDt")),
+            from_arrival_api=True, stations_away=away,
+        ))
+    return out
