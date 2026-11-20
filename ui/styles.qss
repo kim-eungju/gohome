@@ -1,7 +1,7 @@
 /* gohome - 퇴근길 교통정보 */
 
 QWidget {
-    font-family: "Malgun Gothic", "맑은 고딕", "Segoe UI", sans-serif;
+    font-family: "Pretendard", "Malgun Gothic", "맑은 고딕", sans-serif;
     font-size: 10pt;
     color: #1F2933;
 }
@@ -19,6 +19,14 @@ QWidget {
     background: #FEF2F2; color: #B91C1C; border: 1px solid #FCA5A5;
     border-radius: 10px; padding: 8px 12px;
 }
+
+#queryButton {
+    background: #2563EB; color: white; border: none; border-radius: 10px;
+    padding: 9px 28px; font-size: 11pt; font-weight: 700; min-width: 90px;
+}
+#queryButton:hover { background: #1D4ED8; }
+#queryButton:pressed { background: #1E40AF; }
+#queryButton:disabled { background: #9CA3AF; color: #F3F4F6; }
 
 #busy { border: none; background: transparent; max-height: 3px; }
 #busy::chunk { background: #2563EB; }

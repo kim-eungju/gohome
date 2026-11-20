@@ -28,6 +28,7 @@ echo [4/4] EXE 빌드...
     --icon "assets\gohome.ico" ^
     --add-data "ui\styles.qss;ui" ^
     --add-data "assets\gohome.ico;assets" ^
+    --add-data "assets\fonts;assets\fonts" ^
     --exclude-module PySide6.QtWebEngineCore ^
     --exclude-module PySide6.QtWebEngineWidgets ^
     --exclude-module PySide6.QtQml ^

@@ -6,7 +6,7 @@ import sys
 from logging.handlers import RotatingFileHandler
 
 from PySide6.QtCore import Qt
-from PySide6.QtGui import QFont, QGuiApplication, QIcon
+from PySide6.QtGui import QFont, QFontDatabase, QGuiApplication, QIcon
 from PySide6.QtWidgets import QApplication, QMessageBox
 
 from config.settings import app_dir, load_settings, resource_path
@@ -51,6 +51,18 @@ def _setup_logging(secrets: list[str]) -> None:
     logging.getLogger("urllib3").setLevel(logging.WARNING)
 
 
+def _load_fonts() -> str:
+    """assets/fonts 의 Pretendard 를 등록. 실패하면 맑은 고딕으로 대체."""
+    font_dir = resource_path("assets/fonts")
+    families: set[str] = set()
+    if font_dir.is_dir():
+        for f in sorted(font_dir.glob("*.otf")):
+            fid = QFontDatabase.addApplicationFont(str(f))
+            if fid != -1:
+                families.update(QFontDatabase.applicationFontFamilies(fid))
+    return "Pretendard" if "Pretendard" in families else "Malgun Gothic"
+
+
 def main() -> int:
     settings = load_settings()
     _setup_logging(settings.secrets)
@@ -60,7 +72,9 @@ def main() -> int:
     QGuiApplication.setHighDpiScaleFactorRoundingPolicy(Qt.HighDpiScaleFactorRoundingPolicy.PassThrough)
     app = QApplication(sys.argv)
     app.setApplicationName("gohome")
-    app.setFont(QFont("Malgun Gothic", 10))
+    font = QFont(_load_fonts(), 10)
+    font.setHintingPreference(QFont.HintingPreference.PreferNoHinting)  # 부드러운 렌더링
+    app.setFont(font)
     icon_path = resource_path("assets/gohome.ico")
     if icon_path.is_file():
         app.setWindowIcon(QIcon(str(icon_path)))

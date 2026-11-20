@@ -3,10 +3,10 @@ from __future__ import annotations
 import logging
 from typing import Callable
 
-from PySide6.QtCore import QObject, QRunnable, QThreadPool, QTimer, Signal, Slot
+from PySide6.QtCore import QObject, QRunnable, Qt, QThreadPool, QTimer, Signal, Slot
 from PySide6.QtGui import QCloseEvent
-from PySide6.QtWidgets import (QHBoxLayout, QLabel, QMainWindow, QProgressBar, QVBoxLayout,
-                               QWidget)
+from PySide6.QtWidgets import (QHBoxLayout, QLabel, QMainWindow, QProgressBar, QPushButton,
+                               QVBoxLayout, QWidget)
 
 from config.settings import Settings
 from services.transit_service import QueryResult, TransitService
@@ -75,6 +75,10 @@ class MainWindow(QMainWindow):
         top.addStretch(1)
         self.last_query = QLabel("마지막 조회  -", objectName="lastQuery")
         top.addWidget(self.last_query)
+        self.button = QPushButton("조회", objectName="queryButton")
+        self.button.setCursor(Qt.PointingHandCursor)
+        self.button.clicked.connect(self.on_query)
+        top.addWidget(self.button)
         outer.addLayout(top)
 
         self.busy = QProgressBar(objectName="busy")
@@ -115,7 +119,9 @@ class MainWindow(QMainWindow):
     def on_query(self) -> None:
         if self._closing or self._task is not None:
             return
-        self._auto_timer.stop()
+        self._auto_timer.stop()  # 수동 조회 시 60초 타이머를 다시 시작
+        self.button.setEnabled(False)
+        self.button.setText("조회 중…")
         self.busy.setVisible(True)
         self._task = _QueryTask(self.service.query)
         self._task.signals.done.connect(self._on_done)
@@ -135,6 +141,8 @@ class MainWindow(QMainWindow):
         finally:
             self._task = None
             self.busy.setVisible(False)
+            self.button.setText("조회")
+            self.button.setEnabled(True)
             if not self._closing:
                 self._auto_timer.start()
 
