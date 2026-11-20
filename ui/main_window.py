@@ -16,7 +16,7 @@ from ui.subway_panel import SubwayPanel
 
 log = logging.getLogger(__name__)
 
-AUTO_REFRESH_MS = 30_000  # 자동 조회 간격 (30초)
+AUTO_REFRESH_MS = 60_000  # 자동 조회 간격 (60초)
 
 
 class _Signals(QObject):
@@ -48,7 +48,7 @@ class MainWindow(QMainWindow):
         self._task: _QueryTask | None = None
         self._closing = False
 
-        # 자동 조회: 조회가 끝난 뒤 30초 후 다음 조회 (요청이 겹치지 않도록 singleShot)
+        # 자동 조회: 조회가 끝난 뒤 60초 후 다음 조회 (요청이 겹치지 않도록 singleShot)
         self._auto_timer = QTimer(self)
         self._auto_timer.setSingleShot(True)
         self._auto_timer.setInterval(AUTO_REFRESH_MS)
@@ -104,7 +104,7 @@ class MainWindow(QMainWindow):
         panels.addWidget(self.subway_panel, 7)
         outer.addLayout(panels, 1)
 
-        # 실행 직후 1회 조회 (이후 30초마다 자동 조회)
+        # 실행 직후 1회 조회 (이후 60초마다 자동 조회)
         QTimer.singleShot(0, self.on_query)
 
     def closeEvent(self, event: QCloseEvent) -> None:
@@ -119,7 +119,7 @@ class MainWindow(QMainWindow):
     def on_query(self) -> None:
         if self._closing or self._task is not None:
             return
-        self._auto_timer.stop()  # 수동 조회 시 30초 타이머를 다시 시작
+        self._auto_timer.stop()  # 수동 조회 시 60초 타이머를 다시 시작
         self.button.setEnabled(False)
         self.button.setText("조회 중…")
         self.busy.setVisible(True)
