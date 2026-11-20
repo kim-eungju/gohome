@@ -57,23 +57,15 @@ SUBWAY_APPROACH_MIN = 100
 SUBWAY_APPROACH_LAST = 141              # 구로 = 가산 직전 역
 SUBWAY_STATION_NAME = "가산디지털단지역"
 SUBWAY_DIRECTION_LABEL = "독산 방면 (하행)"
-SUBWAY_MAX_ROWS = 8
-# 가산까지 남은 역 수 → 평소 소요시간(분). 사용자 실측 기준 (일반열차).
-# API 가 도착 예정시간을 주지 않아 이 표로 '예상' 시간을 계산한다. 표에 없는 거리는 역 수만 표시.
-SUBWAY_TRAVEL_MIN_BY_STATIONS = {
-    1: 5,    # 구로
-    2: 7,    # 신도림
-    3: 10,   # 영등포
-    4: 12,   # 신길
-    5: 14,   # 대방
-    6: 16,   # 노량진
-    7: 20,   # 용산
-    8: 22,   # 남영
-    9: 25,   # 서울역
-    10: 28,  # 시청
-    11: 30,  # 종각
-    12: 32,  # 종로3가
-}
+SUBWAY_MAX_ROWS = 6
+SUBWAY_LOOKAHEAD_MIN = 60               # 지금부터 이 시간 안에 가산에 오는 열차만 표시
+# 시간표 (서울 열린데이터광장 일반 Open API, 실시간과 같은 키). 1호선 도착 '시각' 은 이 값만 쓴다.
+SUBWAY_OPENAPI_URL = "http://openAPI.seoul.go.kr:8088/{key}/json/{service}/{args}"
+SUBWAY_TIMETABLE_LINE = "01호선"
+SUBWAY_TIMETABLE_STATION_CD = "1702"    # 가산디지털단지 1호선 (SearchSTNBySubwayLineInfo 로 확인)
+SUBWAY_TIMETABLE_INOUT = "2"            # 2 = 하행
+SERVICE_DAY_START_HOUR = 4              # 이 시각 전(새벽)은 전날 운행일로 본다
+SUBWAY_UNSEEN_GRACE_SEC = 120           # 실시간 위치가 안 잡힌 열차를 시간표 시각 뒤 이 시간까지만 표시
 # 환승 예상: JNK디지털타워에서 버스를 탄 뒤 가산디지털단지역 승강장까지 걸리는 시간(분, 가정값).
 BUS_TO_GASAN_MIN = 15
 TRANSFER_TIGHT_SEC = 180                # 버스 도착과 열차 도착이 ±이 시간 안이면 '아슬아슬(△)'로 표시

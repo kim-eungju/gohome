@@ -8,7 +8,7 @@ from datetime import datetime
 from api.subway_api import parse_arrival_response
 from config import settings as cfg
 from models.subway import TrainPosition
-from services.transit_service import filter_and_sort_subway, merge_missing_trains
+from services.transit_service import merge_missing_trains, select_approaching_trains
 
 NOW = datetime(2026, 11, 20, 11, 56, 22, tzinfo=cfg.KST)
 
@@ -36,11 +36,10 @@ def test_missing_train_is_filled_and_shown(load_fixture):
     # 위치 API 에 이미 있는 1919·1921 은 중복으로 넣지 않는다
     assert sorted(t.train_no for t in merged) == ["0445", "0645", "1919", "1921"]
 
-    selected, _ = filter_and_sort_subway(merged, NOW)
+    selected = select_approaching_trains(merged, NOW)
     by_no = {t.train_no: t for t in selected}
     assert "0645" in by_no and by_no["0645"].from_arrival_api
     assert by_no["0645"].stations_away == 1
-    assert by_no["0645"].est_remaining_sec is not None
     assert "0445" not in by_no            # 서동탄행은 개인 제외 행선지
 
 

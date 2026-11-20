@@ -2,19 +2,19 @@
 from __future__ import annotations
 
 import logging
-import re
 import time
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import date, datetime, timedelta
 from typing import Callable, TypeVar
 
-from api import bus_api, subway_api
+from api import bus_api, subway_api, timetable_api
 from api.errors import ApiError
 from config import settings as cfg
 from config.settings import Settings
 from models.bus import BusInfo
-from models.subway import SubwayInfo, TrainPosition
+from api.timetable_api import ScheduledStop, train_number
+from models.subway import GasanTrain, SubwayInfo, TrainPosition, normalize_station_name
 
 log = logging.getLogger(__name__)
 T = TypeVar("T")
@@ -53,31 +53,14 @@ def stations_until_gasan(station_id: str) -> int | None:
     return None
 
 
-def estimate_remaining_sec(stations_away: int, age_sec: int | None) -> int | None:
-    """소요시간 표(사용자 실측) 기반 예상 남은 시간. 위치가 확인된 뒤 지난 시간만큼 뺀다.
-
-    표에 없는 거리(13역 이상)나 위치 시각을 모르면 None (추정하지 않음).
-    """
-    minutes = cfg.SUBWAY_TRAVEL_MIN_BY_STATIONS.get(stations_away)
-    if minutes is None or age_sec is None:
-        return None
-    return max(0, minutes * 60 - age_sec)
-
-
-def normalize_station_name(name: str) -> str:
-    name = re.sub(r"\(.*?\)", "", name).strip()   # "쌍용(나사렛대)" → "쌍용"
-    return name[:-1] if name.endswith("역") and len(name) > 2 else name
-
-
-def filter_and_sort_subway(trains: list[TrainPosition], now: datetime) -> tuple[list[TrainPosition], list[str]]:
-    """가산디지털단지에서 독산 방면으로 탈 수 있는 1호선 열차만 남기고 가까운 순으로 정렬.
+def select_approaching_trains(trains: list[TrainPosition], now: datetime) -> list[TrainPosition]:
+    """가산디지털단지에서 독산 방면으로 탈 수 있는, 아직 가산을 지나지 않은 1호선 열차 (실시간 위치).
 
     조건:
       1) 1호선 & 하행
       2) 현재 위치가 가산으로 들어오는 경로 위 (또는 가산에 진입/도착 중)
       3) 행선지가 가산 이남 역 (구로행·인천행·광운대행 등은 가산에 오지 않음)
       4) 개인 제외 행선지(광명·서동탄 등) 제외
-    급행은 독산에 서지 않지만 가산에는 정차하므로 동일하게 표시한다.
     """
     selected: list[TrainPosition] = []
     for t in trains:
@@ -103,14 +86,156 @@ def filter_and_sort_subway(trains: list[TrainPosition], now: datetime) -> tuple[
         t.stations_away = away
         t.age_sec = age
         t.stale = age is None or age > cfg.SUBWAY_STALE_AFTER_SEC
-        t.est_remaining_sec = estimate_remaining_sec(away, age)
         selected.append(t)
 
     selected.sort(key=lambda t: (t.stations_away, -(t.generated_at.timestamp() if t.generated_at else 0)))
-    warnings: list[str] = []
-    if not selected:
-        warnings.append("현재 가산디지털단지역으로 오는 독산 방면 1호선 열차가 없습니다.")
-    return selected[: cfg.SUBWAY_MAX_ROWS], warnings
+    return selected
+
+
+# ---------------------------------------------------------------------------
+# 시간표 + 실시간 위치 → 가산 도착 예정 (모든 시각은 API 값에서만 계산)
+# ---------------------------------------------------------------------------
+def service_day(now: datetime) -> date:
+    """운행일 (새벽 SERVICE_DAY_START_HOUR 시 전은 전날)."""
+    return (now - timedelta(hours=cfg.SERVICE_DAY_START_HOUR)).date()
+
+
+def week_tag(day: date) -> str:
+    """시간표 API WEEK_TAG: 1 평일 / 2 토요일 / 3 일요일. (공휴일은 구분하지 않음)"""
+    return {5: "2", 6: "3"}.get(day.weekday(), "1")
+
+
+def at_day_sec(day: date, sec: int) -> datetime:
+    return datetime(day.year, day.month, day.day, tzinfo=cfg.KST) + timedelta(seconds=sec)
+
+
+StationTable = Callable[[str], "dict[int, ScheduledStop] | None"]
+
+
+def live_delay_sec(t: TrainPosition, gasan_tt: dict[int, ScheduledStop], station_tt: StationTable,
+                   day: date) -> int | None:
+    """실시간 위치 수신 시각 - 그 역의 시간표 시각 (둘 다 API 값). 시간표에서 열차를 못 찾으면 None."""
+    num = train_number(t.train_no)
+    if num is None or t.generated_at is None:
+        return None
+    table = gasan_tt if t.stations_away == 0 else station_tt(t.station_name)
+    stop = table.get(num) if table else None
+    if stop is None:
+        return None
+    if t.status_code == "2":                     # 출발 → 출발시각과 비교
+        ref = stop.leave_sec or stop.arrive_sec
+    else:                                        # 진입·도착·전역출발·운행중 → 도착시각과 비교
+        ref = stop.arrive_sec or stop.leave_sec
+    if ref is None:
+        return None
+    delay = int((t.generated_at - at_day_sec(day, ref)).total_seconds())
+    return delay if abs(delay) <= 3 * 3600 else None   # 엉뚱한 열차와 매칭된 경우 방지
+
+
+def build_gasan_board(gasan_tt: dict[int, ScheduledStop] | None, live_trains: list[TrainPosition],
+                      passed_nums: set[int], station_tt: StationTable, now: datetime) -> list[GasanTrain]:
+    """시간표(가산 도착시각)를 기준으로, 실시간 위치가 있는 열차는 지연을 반영해 예상 도착을 만든다.
+
+    - 시간표 + 실시간 위치 : 예상 = 시간표 + 지연 (일찍 와 있는 경우는 시간표대로)
+    - 시간표만 (출발 전 / 위치 API 누락) : 예상 = 시간표. 시간표 시각이 SUBWAY_UNSEEN_GRACE_SEC 넘게 지나면 숨김
+    - 실시간 위치만 (시간표에 없는 열차) : 시각 없이 위치만
+    - 이미 가산을 지난 열차(passed_nums) 는 숨김
+    """
+    day = service_day(now)
+    horizon = now + timedelta(minutes=cfg.SUBWAY_LOOKAHEAD_MIN)
+    live_by_num: dict[int, TrainPosition] = {}
+    for t in live_trains:
+        n = train_number(t.train_no)
+        if n is not None:
+            live_by_num[n] = t
+    board: list[GasanTrain] = []
+
+    for num, stop in (gasan_tt or {}).items():
+        ref = stop.arrive_sec or stop.leave_sec
+        if ref is None or num in passed_nums:
+            continue
+        if normalize_station_name(stop.destination) in cfg.EXCLUDED_DESTINATIONS:
+            continue
+        scheduled = at_day_sec(day, ref)
+        live = live_by_num.get(num)
+        if live is not None:
+            delay = live_delay_sec(live, gasan_tt, station_tt, day)
+            if live.stations_away and now > scheduled:
+                # 아직 가산에 안 왔는데 시간표 시각이 지났으면, 최소한 그만큼은 늦은 것
+                delay = max(delay or 0, int((now - scheduled).total_seconds()))
+            expected = scheduled + timedelta(seconds=max(0, delay or 0))
+        else:
+            if scheduled < now - timedelta(seconds=cfg.SUBWAY_UNSEEN_GRACE_SEC):
+                continue
+            delay, expected = None, scheduled
+        if expected > horizon:
+            continue
+        board.append(GasanTrain(stop.train_no, stop.destination, stop.is_express, scheduled, expected, delay, live))
+
+    for num, t in live_by_num.items():          # 시간표에 없는 실시간 열차
+        if gasan_tt and num in gasan_tt:
+            continue
+        board.append(GasanTrain(t.train_no, t.destination, t.is_express, None, None, None, t))
+
+    for g in board:
+        g.at_station = g.live is not None and g.live.stations_away == 0 and g.live.status_code in ("0", "1")
+        if g.at_station:
+            g.remaining_sec = 0
+        elif g.expected is not None:
+            g.remaining_sec = max(0, int((g.expected - now).total_seconds()))
+    far = datetime.max.replace(tzinfo=cfg.KST)
+    board.sort(key=lambda g: (0 if g.at_station else 1, g.expected or far,
+                              g.stations_away if g.stations_away is not None else 999))
+    return board[: cfg.SUBWAY_MAX_ROWS]
+
+
+class TimetableCache:
+    """시간표는 운행일마다 한 번만 받는다 (가산 + 지연 계산에 필요한 역만, 필요할 때)."""
+
+    RETRY_SEC = 300
+
+    def __init__(self, api_key: str):
+        self.api_key = api_key
+        self._day: date | None = None
+        self._stations: dict[str, str] | None = None
+        self._tables: dict[str, dict[int, ScheduledStop]] = {}
+        self._failed: dict[str, float] = {}
+
+    def _roll(self, now: datetime) -> date:
+        day = service_day(now)
+        if day != self._day:
+            self._day, self._stations, self._tables, self._failed = day, None, {}, {}
+        return day
+
+    def _load(self, station_cd: str, day: date) -> dict[int, ScheduledStop]:
+        table = self._tables.get(station_cd)
+        if table is None:
+            data = timetable_api.fetch_timetable(self.api_key, station_cd, week_tag(day), cfg.SUBWAY_TIMETABLE_INOUT)
+            table = self._tables[station_cd] = timetable_api.parse_timetable(data)
+            log.info("timetable: station %s loaded (%d trains, week_tag %s)", station_cd, len(table), week_tag(day))
+        return table
+
+    def gasan(self, now: datetime) -> dict[int, ScheduledStop]:
+        """가산 하행 시간표. 실패하면 ApiError."""
+        return self._load(cfg.SUBWAY_TIMETABLE_STATION_CD, self._roll(now))
+
+    def station(self, name: str, now: datetime) -> dict[int, ScheduledStop] | None:
+        """실시간 위치 역의 하행 시간표 (지연 계산용). 실패해도 None 만 돌려준다."""
+        day = self._roll(now)
+        key = normalize_station_name(name)
+        if time.monotonic() - self._failed.get(key, -1e9) < self.RETRY_SEC:
+            return None
+        try:
+            if self._stations is None:
+                self._stations = timetable_api.parse_line_stations(timetable_api.fetch_line_stations(self.api_key))
+            code = self._stations.get(key)
+            return self._load(code, day) if code else None
+        except ApiError as e:
+            log.warning("timetable: %s (%s) - %s", name, e.kind.value, e.message)
+        except Exception:
+            log.exception("timetable: %s unexpected error", name)
+        self._failed[key] = time.monotonic()
+        return None
 
 
 # ---------------------------------------------------------------------------
@@ -119,6 +244,7 @@ def filter_and_sort_subway(trains: list[TrainPosition], now: datetime) -> tuple[
 class TransitService:
     def __init__(self, settings: Settings):
         self.settings = settings
+        self.timetable = TimetableCache(settings.subway_api_key)
 
     def query(self) -> QueryResult:
         if self.settings.mock_mode:
@@ -143,8 +269,25 @@ class TransitService:
             data = subway_api.fetch_subway_raw(self.settings.subway_api_key)
             trains = subway_api.parse_subway_response(data)
             trains = merge_missing_trains(trains, fa.result())
-        selected, warnings = filter_and_sort_subway(trains, now_kst())
-        return SubwayInfo(cfg.SUBWAY_STATION_NAME, cfg.SUBWAY_DIRECTION_LABEL, selected, warnings=warnings)
+        now = now_kst()
+        warnings: list[str] = []
+        try:
+            gasan_tt = self.timetable.gasan(now)
+        except ApiError as e:
+            log.warning("timetable gasan: %s (%s)", e.message, e.kind.value)
+            gasan_tt = None
+            warnings.append(f"⚠ 시간표를 불러오지 못해 도착 시각 없이 실시간 위치만 표시합니다. ({e.message})")
+        live = select_approaching_trains(trains, now)
+        live_nums = {train_number(t.train_no) for t in live}
+        # 하행인데 가산 접근 구간에 없는 열차 = 이미 가산을 지난 열차 → 시간표에서도 숨김
+        passed = {n for t in trains
+                  if t.subway_id == cfg.SUBWAY_LINE_ID and t.updn_line == cfg.SUBWAY_SOUTHBOUND_UPDN
+                  and (n := train_number(t.train_no)) is not None and n not in live_nums}
+        board = build_gasan_board(gasan_tt, live, passed, lambda name: self.timetable.station(name, now), now)
+        if not board:
+            warnings.append(f"앞으로 {cfg.SUBWAY_LOOKAHEAD_MIN}분 안에 가산디지털단지역으로 오는 "
+                            "독산 방면 1호선 열차가 없습니다.")
+        return SubwayInfo(cfg.SUBWAY_STATION_NAME, cfg.SUBWAY_DIRECTION_LABEL, board, warnings=warnings)
 
     def _query_arrival_trains(self) -> list[TrainPosition]:
         """보조 조회. 실패해도 위치 API 결과만으로 화면을 그린다."""

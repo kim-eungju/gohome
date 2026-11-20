@@ -1,7 +1,7 @@
 """버스 → 1호선 환승 가능 여부 예상.
 
 JNK디지털타워에서 버스를 타면 가산디지털단지역 승강장까지 BUS_TO_GASAN_MIN 분이 걸린다고 가정하고,
-'버스 도착 + 이동 시간' 이 열차의 예상 도착보다 앞서는지 비교한다. 모든 시간은 조회 시점 기준(초).
+'버스 도착 + 이동 시간' 과 열차의 예상 도착(시간표 API + 실시간 지연)을 비교한다. 모든 시간은 조회 시점 기준(초).
 """
 from __future__ import annotations
 
@@ -9,7 +9,7 @@ from enum import Enum
 
 from config import settings as cfg
 from models.bus import BusArrival, BusStatus
-from models.subway import TrainPosition
+from models.subway import GasanTrain
 
 
 class Catch(Enum):
@@ -27,26 +27,13 @@ def bus_arrival_sec(bus: BusArrival) -> int | None:
     return None  # 출발대기·운행종료·정보없음
 
 
-def judge(train: TrainPosition, bus: BusArrival) -> Catch | None:
-    """해당 버스를 탔을 때 이 열차를 탈 수 있을지. 판단할 근거가 없으면 None."""
+def judge(train: GasanTrain, bus: BusArrival) -> Catch | None:
+    """해당 버스를 탔을 때 이 열차를 탈 수 있을지. 열차·버스 시각을 모르면 None."""
     bus_sec = bus_arrival_sec(bus)
-    if bus_sec is None or train.stations_away is None:
+    train_sec = 0 if train.at_station else train.remaining_sec
+    if bus_sec is None or train_sec is None:
         return None
-    at_gasan = bus_sec + cfg.BUS_TO_GASAN_MIN * 60
-
-    if train.stations_away == 0:
-        train_sec = 0
-    elif train.est_remaining_sec is not None:
-        train_sec = train.est_remaining_sec
-    else:
-        # 소요시간 표보다 먼 열차: 최소한 표의 최대값만큼은 걸린다 → 그래도 여유가 있으면 가능
-        far = max(cfg.SUBWAY_TRAVEL_MIN_BY_STATIONS)
-        if train.stations_away <= far or train.age_sec is None:
-            return None
-        lower = cfg.SUBWAY_TRAVEL_MIN_BY_STATIONS[far] * 60 - train.age_sec
-        return Catch.OK if lower - at_gasan >= cfg.TRANSFER_TIGHT_SEC else None
-
-    slack = train_sec - at_gasan
+    slack = train_sec - (bus_sec + cfg.BUS_TO_GASAN_MIN * 60)
     if slack >= cfg.TRANSFER_TIGHT_SEC:
         return Catch.OK
     if slack > -cfg.TRANSFER_TIGHT_SEC:
