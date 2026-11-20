@@ -1,0 +1,18 @@
+# 인증키
+.env
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+.pytest_cache/
+
+# 빌드
+build/
+dist/
+*.spec
+
+# 로그 / IDE
+*.log
+.idea/
+.vscode/
