@@ -7,13 +7,17 @@ from PySide6.QtWidgets import (QFrame, QGridLayout, QHBoxLayout, QLabel, QScroll
                                QVBoxLayout, QWidget)
 
 from config import settings as cfg
+from models.bus import BusArrival, BusInfo
 from models.subway import SubwayInfo, TrainPosition
+from services.transfer import Catch, judge
 from ui.formatters import age_text, clear_layout, eta_text, remaining_text
 
 # 열 너비 (구분 / 행선지 / 가산까지 / 현재 위치 / 정보 시각)
 _COL_STRETCH = (0, 3, 3, 4, 0)
 _BADGE_W = 52
 _ETA_W = 64
+_BUS_NAME = {1: "첫 버스", 2: "둘째 버스"}
+_CATCH_MARK = {Catch.OK: ("○", "ok"), Catch.TIGHT: ("△", "warn"), Catch.MISS: ("✕", "no")}
 
 
 def _label(text: str, name: str = "", wrap: bool = False) -> QLabel:
@@ -110,16 +114,17 @@ class SubwayPanel(QFrame):
         self.rows.addStretch(1)
         self.footer.setText("")
 
-    def show_info(self, info: SubwayInfo, queried_at: datetime) -> None:
+    def show_info(self, info: SubwayInfo, queried_at: datetime, bus: BusInfo | None = None) -> None:
         self.mock_tag.setVisible(info.is_mock)
         if not info.arrivals:
             ph = _label("도착정보 없음", "subwayTimeMuted")
             ph.setAlignment(Qt.AlignCenter)
             self._set_body_message(ph)
         else:
+            buses = [b for b in (bus.arrivals if bus else []) if b.order in _BUS_NAME]
             clear_layout(self.rows)
             for a in info.arrivals:
-                self.rows.addWidget(self._row(a, queried_at))
+                self.rows.addWidget(self._row(a, queried_at, buses))
             self.rows.addStretch(1)
 
         notes = []
@@ -131,11 +136,14 @@ class SubwayPanel(QFrame):
                              "'정보 시각'은 열차 위치가 확인된 시점입니다.")
             if any(a.stale for a in info.arrivals):
                 notes.append("⚠ '정보 지연' 열차는 위치 정보가 5분 이상 갱신되지 않아 참고용입니다.")
+        if info.arrivals and bus is not None:
+            notes.append(f"버스 탑승 시 환승: JNK디지털타워 → 가산디지털단지역 {cfg.BUS_TO_GASAN_MIN}분 가정 "
+                         f"(○ 가능 · △ 아슬아슬 · ✕ 어려움)")
         notes.extend(w for w in info.warnings if w not in notes)
         self.footer.setText("\n".join(notes))
 
     # ------------------------------------------------------------------
-    def _row(self, a: TrainPosition, queried_at: datetime) -> QWidget:
+    def _row(self, a: TrainPosition, queried_at: datetime, buses: list[BusArrival]) -> QWidget:
         row = QFrame(objectName="subwayRow")
         g = _grid()
         row.setLayout(g)
@@ -174,6 +182,17 @@ class SubwayPanel(QFrame):
             box.addWidget(_label(f"{a.stations_away}역 전", "subwayTimeMuted"))
         else:
             box.addWidget(_label("-", "subwayTimeMuted"))
+        catch = QHBoxLayout()
+        catch.setSpacing(4)
+        for b in buses:
+            result = judge(a, b)
+            if result is not None:
+                mark, kind = _CATCH_MARK[result]
+                catch.addWidget(_tag(f"{_BUS_NAME[b.order]} {mark}", kind))
+        if catch.count():
+            catch.addStretch(1)
+            box.addSpacing(3)
+            box.addLayout(catch)
         g.addLayout(box, 0, 2)
         g.addWidget(_label(a.status_text or "-", "statusText", wrap=True), 0, 3)
         g.addWidget(_label(age_text(a.age_sec), "etaText"), 0, 4)

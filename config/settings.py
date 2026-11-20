@@ -70,7 +70,10 @@ SUBWAY_TRAVEL_MIN_BY_STATIONS = {
     11: 30,  # 종각
     12: 32,  # 종로3가
 }
-SUBWAY_STALE_AFTER_SEC = 300           # 위치 정보가 이보다 오래되면 '정보 지연' 표시
+# 환승 예상: JNK디지털타워에서 버스를 탄 뒤 가산디지털단지역 승강장까지 걸리는 시간(분, 가정값).
+BUS_TO_GASAN_MIN = 15
+TRANSFER_TIGHT_SEC = 180                # 버스 도착과 열차 도착이 ±이 시간 안이면 '아슬아슬(△)'로 표시
+SUBWAY_STALE_AFTER_SEC = 300          # 위치 정보가 이보다 오래되면 '정보 지연' 표시
 SUBWAY_AT_STATION_MAX_AGE = 120         # 가산 진입/도착 정보가 이보다 오래되면 이미 출발한 것으로 보고 숨김
 
 # 가산디지털단지역 남쪽(독산 방면)에 있는 1호선 종착 가능역.

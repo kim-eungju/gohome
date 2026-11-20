@@ -92,6 +92,12 @@ QLabel[badge="기타"] {
 QLabel[tag="warn"] {
     background: #FFF4E5; color: #B45309; border-radius: 6px; padding: 1px 6px; font-size: 8.5pt;
 }
+QLabel[tag="ok"] {
+    background: #E7F6EC; color: #15803D; border-radius: 6px; padding: 1px 6px; font-size: 8.5pt; font-weight: 700;
+}
+QLabel[tag="no"] {
+    background: #F3F4F6; color: #9CA3AF; border-radius: 6px; padding: 1px 6px; font-size: 8.5pt;
+}
 QLabel[tag="info"] {
     background: #EEF2F7; color: #374151; border-radius: 6px; padding: 1px 6px; font-size: 8.5pt;
 }

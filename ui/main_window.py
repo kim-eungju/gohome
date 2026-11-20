@@ -3,7 +3,8 @@ from __future__ import annotations
 import logging
 from typing import Callable
 
-from PySide6.QtCore import QObject, QRunnable, Qt, QThreadPool, Signal, Slot
+from PySide6.QtCore import QObject, QRunnable, Qt, QThreadPool, QTimer, Signal, Slot
+from PySide6.QtGui import QCloseEvent
 from PySide6.QtWidgets import (QHBoxLayout, QLabel, QMainWindow, QProgressBar, QPushButton,
                                QVBoxLayout, QWidget)
 
@@ -14,6 +15,8 @@ from ui.formatters import clock
 from ui.subway_panel import SubwayPanel
 
 log = logging.getLogger(__name__)
+
+AUTO_REFRESH_MS = 10_000  # 자동 조회 간격 (10초)
 
 
 class _Signals(QObject):
@@ -43,6 +46,13 @@ class MainWindow(QMainWindow):
         self.service = service
         self.settings = settings
         self._task: _QueryTask | None = None
+        self._closing = False
+
+        # 자동 조회: 조회가 끝난 뒤 10초 후 다음 조회 (요청이 겹치지 않도록 singleShot)
+        self._auto_timer = QTimer(self)
+        self._auto_timer.setSingleShot(True)
+        self._auto_timer.setInterval(AUTO_REFRESH_MS)
+        self._auto_timer.timeout.connect(self.on_query)
 
         self.setWindowTitle("퇴근길 교통정보")
         self.resize(1000, 600)
@@ -94,11 +104,22 @@ class MainWindow(QMainWindow):
         panels.addWidget(self.subway_panel, 3)
         outer.addLayout(panels, 1)
 
+        # 실행 직후 1회 조회 (이후 10초마다 자동 조회)
+        QTimer.singleShot(0, self.on_query)
+
+    def closeEvent(self, event: QCloseEvent) -> None:
+        # 창을 닫으면 자동 조회를 확실히 멈춘다 (API 일일 호출 한도 보호)
+        self._closing = True
+        self._auto_timer.stop()
+        log.info("window closed; auto refresh stopped")
+        super().closeEvent(event)
+
     # ------------------------------------------------------------------
     @Slot()
     def on_query(self) -> None:
-        if self._task is not None:
+        if self._closing or self._task is not None:
             return
+        self._auto_timer.stop()  # 수동 조회 시 10초 타이머를 다시 시작
         self.button.setEnabled(False)
         self.button.setText("조회 중…")
         self.busy.setVisible(True)
@@ -122,6 +143,8 @@ class MainWindow(QMainWindow):
             self.busy.setVisible(False)
             self.button.setText("조회")
             self.button.setEnabled(True)
+            if not self._closing:
+                self._auto_timer.start()
 
     def _render(self, r: QueryResult) -> None:
         if r.bus is not None:
@@ -129,7 +152,7 @@ class MainWindow(QMainWindow):
         else:
             self.bus_panel.show_error(r.bus_error or "알 수 없는 오류")
         if r.subway is not None:
-            self.subway_panel.show_info(r.subway, r.queried_at)
+            self.subway_panel.show_info(r.subway, r.queried_at, r.bus)
         else:
             self.subway_panel.show_error(r.subway_error or "알 수 없는 오류")
         suffix = "  (테스트 데이터)" if r.is_mock else ""
